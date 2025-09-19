@@ -19,6 +19,8 @@ class BleManager {
   DiscoveredDevice? _foundDevice;
   String? deviceName;
 
+  final Set<String> _discoveredDeviceIds = <String>{};
+
   final StreamController<bool> _connectionController = StreamController<bool>.broadcast();
   Stream<bool> get connectionStream => _connectionController.stream;
 
@@ -29,14 +31,93 @@ class BleManager {
     Map<Permission, PermissionStatus> statuses = await [
       Permission.bluetooth,
       Permission.bluetoothScan,
+      Permission.bluetoothConnect,
       Permission.locationWhenInUse,
     ].request();
 
     bool allGranted = statuses.values.every((status) => status.isGranted);
+    print("** Permission status: $statuses");
     return allGranted;
   }
 
+  void startDeviceScan(Function(DiscoveredDevice) onDeviceFound) {
+    print("** Starting BLE scan...");
+    _scanSub?.cancel();
+
+    _discoveredDeviceIds.clear();
+
+    // Check BLE status first
+    _ble.statusStream.listen((status) {
+      print("** BLE Status: $status");
+    });
+
+    _scanSub = _ble.scanForDevices(
+      withServices: [],
+      scanMode: ScanMode.lowLatency,
+      requireLocationServicesEnabled: false,
+    ).listen((device) {
+      print("** Found device: ${device.name} (${device.id})");
+      print("** Device services: ${device.serviceUuids}");
+
+      if (_discoveredDeviceIds.contains(device.id)) {
+        return;
+      }
+
+      if (!device.name.startsWith("GL-")) {
+        return;
+      }
+
+      _discoveredDeviceIds.add(device.id);
+
+      onDeviceFound(device);
+    }, onError: (error) {
+      print("** Scan error: $error");
+      _retryGenericScan(onDeviceFound);
+    });
+
+    // Add timeout to prevent infinite scanning
+    Timer(Duration(seconds: 30), () {
+      if (_scanSub != null && !_scanSub!.isPaused) {
+        print("** Scan timeout reached");
+        stopScan();
+      }
+    });
+  }
+
+  void _retryGenericScan(Function(DiscoveredDevice) onDeviceFound) {
+    print("** Retrying with generic scan...");
+    _scanSub?.cancel();
+
+    _scanSub = _ble.scanForDevices(
+      withServices: [], // Scan for all devices
+      scanMode: ScanMode.lowLatency,
+    ).listen((device) {
+      print("** Found device (generic): ${device.name} (${device.id})");
+
+      if (_discoveredDeviceIds.contains(device.id)) {
+        return;
+      }
+
+      if (!device.name.startsWith("GL-")) {
+        return;
+      }
+
+      _discoveredDeviceIds.add(device.id);
+
+      onDeviceFound(device);
+    }, onError: (error) {
+      print("** Generic scan error: $error");
+    });
+  }
+
+  void stopScan() {
+    print("** Stopping scan");
+    _scanSub?.cancel();
+    _scanSub = null;
+  }
+
   void startScan({required VoidCallback onDeviceFound}) {
+    print("** wk start scan =======");
     _scanSub?.cancel();
 
     _scanSub = _ble.scanForDevices(
@@ -44,6 +125,7 @@ class BleManager {
       scanMode: ScanMode.lowLatency,
     ).listen((device) {
       if (device.name.startsWith("GL-")) {
+        print("** wk device: ${device.name}");
         _foundDevice = device;
         deviceName = device.name;
         _scanSub?.cancel();
@@ -54,23 +136,6 @@ class BleManager {
     });
   }
 
-  // Expose a method to start scanning, with a callback when device found
-  void startDeviceScan(Function(DiscoveredDevice) onDeviceFound) {
-    _scanSub?.cancel();
-    _scanSub = _ble.scanForDevices(
-      withServices: [BleDevice.serviceUuid],
-      scanMode: ScanMode.lowLatency,
-    ).listen((device) {
-      if (device.name.startsWith("GL-")) {
-        onDeviceFound(device);
-        _scanSub?.cancel();
-      }
-    }, onError: (error) {
-      print("Scan error: $error");
-    });
-  }
-
-// Expose a public method to connect to a device by ID
   void connectToDeviceById(String deviceId, VoidCallback onConnected) {
     _connection?.cancel();
 
@@ -78,6 +143,7 @@ class BleManager {
       id: deviceId,
       connectionTimeout: Duration(seconds: 5),
     ).listen((connectionState) async {
+      print("** Connection state: ${connectionState.connectionState}");
       if (connectionState.connectionState == DeviceConnectionState.connected) {
         await _onConnected(deviceId);
         WakelockPlus.enable();
@@ -86,7 +152,6 @@ class BleManager {
       } else if (connectionState.connectionState == DeviceConnectionState.disconnected) {
         WakelockPlus.disable();
         _connectionController.add(false);
-        // Optionally restart scanning or notify user
       }
     }, onError: (error) {
       print("Connection error: $error");
@@ -117,41 +182,51 @@ class BleManager {
       WakelockPlus.disable();
       _connectionController.add(false);
       startScan(onDeviceFound: onDeviceFound);
-
     });
   }
 
   Future<void> _onConnected(String deviceId) async {
-    final services = await _ble.discoverServices(deviceId);
-    for (var service in services) {
-      if (service.serviceId == BleDevice.serviceUuid) {
-        for (var char in service.characteristics) {
-          if (char.characteristicId == BleDevice.characteristicWriteUuid) {
-            _writeCharacteristic = QualifiedCharacteristic(
-              characteristicId: BleDevice.characteristicWriteUuid,
-              serviceId: BleDevice.serviceUuid,
-              deviceId: deviceId,
-            );
-          } else if (char.characteristicId == BleDevice.characteristicNotifyUuid) {
-            _notifyCharacteristic = QualifiedCharacteristic(
-              characteristicId: BleDevice.characteristicNotifyUuid,
-              serviceId: BleDevice.serviceUuid,
-              deviceId: deviceId,
-            );
+    try {
+      final services = await _ble.discoverServices(deviceId);
+      print("** Discovered ${services.length} services");
+
+      for (var service in services) {
+        print("** Service: ${service.serviceId}");
+        if (service.serviceId == BleDevice.serviceUuid) {
+          for (var char in service.characteristics) {
+            print("** Characteristic: ${char.characteristicId}");
+            if (char.characteristicId == BleDevice.characteristicWriteUuid) {
+              _writeCharacteristic = QualifiedCharacteristic(
+                characteristicId: BleDevice.characteristicWriteUuid,
+                serviceId: BleDevice.serviceUuid,
+                deviceId: deviceId,
+              );
+            } else if (char.characteristicId == BleDevice.characteristicNotifyUuid) {
+              _notifyCharacteristic = QualifiedCharacteristic(
+                characteristicId: BleDevice.characteristicNotifyUuid,
+                serviceId: BleDevice.serviceUuid,
+                deviceId: deviceId,
+              );
+            }
           }
         }
       }
-    }
 
-    _ble.subscribeToCharacteristic(_notifyCharacteristic).listen((data) {
-      _notificationController.add(data);
-    }, onError: (e) {
-      print("Notification error: $e");
-    });
+      _ble.subscribeToCharacteristic(_notifyCharacteristic).listen((data) {
+        _notificationController.add(data);
+      }, onError: (e) {
+        print("Notification error: $e");
+      });
+    } catch (e) {
+      print("** Error during service discovery: $e");
+    }
   }
 
   Future<void> sendSyncCommand({int sleepTime = 5, int clubIndex = 0}) async {
-    if (_foundDevice == null) return;
+    if (_foundDevice == null) {
+      print("** No device connected");
+      return;
+    }
 
     final cmdBytes = BleDevice.buildSyncCommand(sleepTimeMinutes: sleepTime, clubNameIndex: clubIndex);
 
@@ -164,7 +239,10 @@ class BleManager {
   }
 
   Future<void> sendUploadRecord(int recNo) async {
-    if (_foundDevice == null) return;
+    if (_foundDevice == null) {
+      print("** No device connected");
+      return;
+    }
 
     final cmdBytes = BleDevice.buildUploadRecordCommand(recNo);
 
@@ -178,21 +256,6 @@ class BleManager {
 
   ParsedNotification? parseNotification(List<int> data) {
     return BleDataParser.parseNotification(data);
-  }
-
-  void _startScan({required Function(DiscoveredDevice device) onDeviceFound}) {
-    _scanSub?.cancel();
-    _scanSub = _ble.scanForDevices(
-      withServices: [BleDevice.serviceUuid],
-      scanMode: ScanMode.lowLatency,
-    ).listen((device) {
-      if (device.name.startsWith("GL-")) {
-        onDeviceFound(device);
-        _scanSub?.cancel();
-      }
-    }, onError: (error) {
-      print("Scan error: $error");
-    });
   }
 
   void dispose() {
