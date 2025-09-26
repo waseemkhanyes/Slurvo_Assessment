@@ -8,23 +8,21 @@ import 'package:slurvo/ble/mock_ble_service.dart';
 import 'package:slurvo/page/home/widget/anaylysis_card_view.dart';
 import 'package:slurvo/page/home/widget/customize_option_view.dart';
 import 'package:slurvo/page/start/start_screen.dart';
-import 'package:slurvo/utils/platform_utils.dart';
 
 class HomeScreen extends StatefulWidget {
+  final bool isMockMode;
 
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, required this.isMockMode});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-
   final BleManager _bleManager = BleManager();
   Timer? _syncTimer;
 
   bool _connected = false;
-  bool _isSimulatorMode = false;
   String batteryLevel = "0";
   String clubName = "Driver";
   double clubSpeed = 0.0;
@@ -36,36 +34,29 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
 
-    // Check if already connected from StartScreen
-    if (_bleManager.isConnected) {
+    // Check if already connected from StartScreen or using mock mode
+    if (widget.isMockMode) {
+      print("Starting in mock mode");
+      _startMockMode();
+    } else if (_bleManager.isConnected) {
       setState(() {
         _connected = true;
       });
       _startRealDataSync();
-      return;
-    }
-
-    isRunningOnSimulator().then((simulator) async {
-      setState(() {
-        _isSimulatorMode = simulator;
-      });
-
-      if (simulator) {
-        print("Running on simulator — using mock BLE data");
-        _startMockMode();
-      } else {
-        bool permissionGranted = await _bleManager.requestPermissions();
+    } else {
+      // Check permissions for real device
+      _bleManager.requestPermissions().then((permissionGranted) {
         if (!permissionGranted) {
           print("Bluetooth permissions not granted.");
         }
-      }
-    });
+      });
+    }
 
     _bleManager.connectionStream.listen((connected) {
       setState(() {
         _connected = connected;
       });
-      if (connected && !_isSimulatorMode) {
+      if (connected && !widget.isMockMode) {
         _startRealDataSync();
       }
     });
@@ -78,7 +69,6 @@ class _HomeScreenState extends State<HomeScreen> {
   void _startMockMode() {
     setState(() {
       _connected = true;
-      _isSimulatorMode = true;
     });
 
     _syncTimer?.cancel();
@@ -133,8 +123,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _syncTimer?.cancel();
-    if (_isSimulatorMode) {
-      // Only dispose if we created it in simulator mode
+    if (widget.isMockMode) {
+      // Only dispose if we created it in mock mode
       _bleManager.dispose();
     }
     super.dispose();
@@ -152,7 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text("SLURVO", style: TextStyle(fontWeight: FontWeight.bold)),
-            if (_isSimulatorMode) ...[
+            if (widget.isMockMode) ...[
               SizedBox(width: 8),
               Container(
                 padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -202,7 +192,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 SizedBox(width: 8),
                 Text(
                   _connected
-                      ? (_isSimulatorMode ? "Mock Data Active" : "Device Connected")
+                      ? (widget.isMockMode ? "Mock Data Active" : "Device Connected")
                       : "Device Disconnected",
                   style: TextStyle(
                     color: _connected ? Colors.green : Colors.red,
@@ -323,8 +313,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: const Text("Session View", style: TextStyle(fontSize: 18)),
                 ),
 
-                // Debug info for simulator
-                if (_isSimulatorMode) ...[
+                // Debug info for mock mode
+                if (widget.isMockMode) ...[
                   const SizedBox(height: 20),
                   Container(
                     padding: EdgeInsets.all(12),
@@ -337,7 +327,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          "Debug Info (Simulator Mode)",
+                          "Debug Info (Mock Mode)",
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: Colors.blue,

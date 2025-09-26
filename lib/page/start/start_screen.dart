@@ -17,7 +17,6 @@ class _StartScreenState extends State<StartScreen> {
 
   List<DiscoveredDevice> _foundDevices = [];
   bool _scanning = false;
-  bool _isSimulator = false;
   bool _permissionsGranted = false;
   String? _statusMessage;
   String? _connectingDeviceId;
@@ -25,12 +24,6 @@ class _StartScreenState extends State<StartScreen> {
   @override
   void initState() {
     super.initState();
-
-    isRunningOnSimulator().then((simulator) {
-      setState(() {
-        _isSimulator = simulator;
-      });
-    });
 
     // Check permissions on startup
     _checkPermissions();
@@ -189,7 +182,7 @@ class _StartScreenState extends State<StartScreen> {
               if (mounted) {
                 Navigator.pushReplacement(
                     context,
-                    MaterialPageRoute(builder: (_) => HomeScreen())
+                    MaterialPageRoute(builder: (_) => HomeScreen(isMockMode: false))
                 );
               }
             });
@@ -216,7 +209,7 @@ class _StartScreenState extends State<StartScreen> {
       builder: (context) => AlertDialog(
         title: Text("Permissions Required"),
         content: Text(
-            "This app needs Bluetooth and Location permissions to scan for GL devices. "
+            "This app needs Bluetooth and Location permissions to scan for devices. "
                 "Please grant these permissions in your device settings.\n\n"
                 "Required permissions:\n"
                 "• Bluetooth\n"
@@ -269,7 +262,10 @@ class _StartScreenState extends State<StartScreen> {
   }
 
   void _startMockMode() {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => HomeScreen()));
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => HomeScreen(isMockMode: true)),
+    );
   }
 
   Color _getStatusColor() {
@@ -359,23 +355,21 @@ class _StartScreenState extends State<StartScreen> {
               ),
             ),
 
-            // Simulator mock mode button
-            if (_isSimulator) ...[
-              Container(
-                width: double.infinity,
-                margin: EdgeInsets.only(bottom: 16),
-                child: ElevatedButton.icon(
-                  onPressed: _startMockMode,
-                  icon: Icon(Icons.developer_mode),
-                  label: Text('Use Mock Data (Simulator Mode)'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                  ),
+            // Mock data button (always shown)
+            Container(
+              width: double.infinity,
+              margin: EdgeInsets.only(bottom: 16),
+              child: ElevatedButton.icon(
+                onPressed: _startMockMode,
+                icon: Icon(Icons.developer_mode),
+                label: Text('Use Mock Data'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(vertical: 16),
                 ),
               ),
-            ],
+            ),
 
             // Main scan button
             Container(
@@ -385,7 +379,7 @@ class _StartScreenState extends State<StartScreen> {
                 onPressed: (_connectingDeviceId != null) ? null : (_scanning ? _stopScan : _startScan),
                 icon: Icon(_scanning ? Icons.stop : Icons.search),
                 label: Text(
-                  _scanning ? 'Stop Scanning' : 'Scan for GL Devices',
+                  _scanning ? 'Stop Scanning' : 'Scan for Devices',
                   style: TextStyle(fontSize: 16),
                 ),
                 style: ElevatedButton.styleFrom(
@@ -430,8 +424,8 @@ class _StartScreenState extends State<StartScreen> {
                     SizedBox(height: 16),
                     Text(
                       _scanning
-                          ? 'Searching for GL devices...'
-                          : 'No GL devices found.\n\nMake sure your club launch monitor is:\n• Powered ON\n• Within range (10-30 feet)\n• Not connected to another device',
+                          ? 'Searching for devices...'
+                          : 'No devices found.\n\nMake sure your club launch monitor is:\n• Powered ON\n• Within range (10-30 feet)\n• Not connected to another device',
                       style: TextStyle(
                         color: Colors.grey[400],
                         fontSize: 16,
